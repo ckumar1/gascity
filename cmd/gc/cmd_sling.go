@@ -490,6 +490,7 @@ func cmdSlingWithJSON(args []string, isFormula, doNudge, force bool, title strin
 			return shellSlingRunner(dir, command, merged)
 		}
 	}
+	sourceWorkflowScanWarnings := make(map[string]struct{})
 	deps := slingDeps{
 		CityName: cityName,
 		CityPath: cityPath,
@@ -500,15 +501,16 @@ func cmdSlingWithJSON(args []string, isFormula, doNudge, force bool, title strin
 		StoreRef: storeRef,
 		SourceWorkflowStores: func() ([]sling.SourceWorkflowStore, error) {
 			stores, skips, err := openSourceWorkflowStores(cfg, cityPath, "")
-			if err != nil {
+			unscannedSkips, selectedRecovered := unscannedSourceWorkflowStoreSkips(cfg, cityPath, storeRef, skips)
+			if err != nil && !selectedRecovered {
 				return nil, err
 			}
-			if len(skips) > 0 {
+			if len(unscannedSkips) > 0 {
 				// The sling callback cannot push into SlingResult from
 				// this depth, but stderr is the only channel operators
 				// look at; silence here means singleton coverage can
 				// degrade without any breadcrumb.
-				fmt.Fprintln(stderr, "warning:", formatSourceWorkflowStoreSkips(skips)) //nolint:errcheck
+				fmt.Fprintln(stderr, "warning:", formatSourceWorkflowStoreSkips(unscannedSkips)) //nolint:errcheck
 			}
 			out := make([]sling.SourceWorkflowStore, 0, len(stores))
 			for _, storeView := range stores {
@@ -518,6 +520,17 @@ func cmdSlingWithJSON(args []string, isFormula, doNudge, force bool, title strin
 				})
 			}
 			return out, nil
+		},
+		SourceWorkflowStoreScanWarning: func(storeRef string, scanErr error) {
+			key := strings.TrimSpace(storeRef)
+			if _, warned := sourceWorkflowScanWarnings[key]; warned {
+				return
+			}
+			sourceWorkflowScanWarnings[key] = struct{}{}
+			fmt.Fprintln(stderr, "warning:", formatSourceWorkflowStoreSkips([]sourceWorkflowStoreSkip{{ //nolint:errcheck
+				path: storeRef,
+				err:  scanErr,
+			}}))
 		},
 	}
 
